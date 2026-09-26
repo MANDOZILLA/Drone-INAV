@@ -1,0 +1,229 @@
+#pragma once
+
+#include "config/parameter_group.h"
+#include "flight/failsafe.h"
+#include "flight/mixer.h"
+#include "flight/servos.h"
+
+#ifndef MAX_MIXER_PROFILE_COUNT
+#define MAX_MIXER_PROFILE_COUNT 2
+#endif
+
+typedef struct mixerConfig_s {
+    int8_t motorDirectionInverted;
+    uint8_t platformType;
+    bool hasFlaps;
+    int16_t appliedMixerPreset;
+    bool motorstopOnLow;
+    bool controlProfileLinking;
+    bool automated_switch;
+    int16_t switchTransitionTimer;
+#ifdef USE_AUTO_TRANSITION
+    bool vtolTransitionDynamicMixer;
+    bool manualVtolTransitionController;
+    uint16_t vtolTransitionAirspeedTimeoutMs;
+    uint16_t vtolTransitionScaleRampTimeMs;
+#endif
+    bool tailsitterOrientationOffset;
+    int16_t transition_PID_mmix_multiplier_roll;
+    int16_t transition_PID_mmix_multiplier_pitch;
+    int16_t transition_PID_mmix_multiplier_yaw;
+} mixerConfig_t;
+typedef struct mixerProfile_s {
+    mixerConfig_t mixer_config;
+    motorMixer_t MotorMixers[MAX_SUPPORTED_MOTORS];
+    servoMixer_t ServoMixers[MAX_SERVO_RULES];
+} mixerProfile_t;
+
+PG_DECLARE_ARRAY(mixerProfile_t, MAX_MIXER_PROFILE_COUNT, mixerProfiles);
+typedef enum {
+    MIXERAT_REQUEST_NONE, //no request, stats checking only
+    MIXERAT_REQUEST_RTH,
+    MIXERAT_REQUEST_LAND,
+#ifdef USE_AUTO_TRANSITION
+    MIXERAT_REQUEST_MISSION_TO_FW,
+    MIXERAT_REQUEST_MISSION_TO_MC,
+    MIXERAT_REQUEST_MANUAL_TO_FW,
+    MIXERAT_REQUEST_MANUAL_TO_MC,
+    MIXERAT_REQUEST_FW_TO_MC_PROTECTION,
+#endif
+    MIXERAT_REQUEST_ABORT,
+} mixerProfileATRequest_e;
+
+#ifdef USE_AUTO_TRANSITION
+#define MIXER_TRANSITION_AIRSPEED_CONFIRM_MS 300
+#define MIXER_TRANSITION_AIRSPEED_PROGRESS_BUCKET_MS 100
+#define MIXER_TRANSITION_MC_LIFT_OUTPUT_HANDOFF_MAX_MS MIXER_TRANSITION_AIRSPEED_CONFIRM_MS
+#define MIXER_TRANSITION_TAILSITTER_CAPTURE_PITCH_DECIDEGREES 450
+#define MIXER_TRANSITION_TAILSITTER_CAPTURE_PITCH_TOLERANCE_DECIDEGREES 100
+#define MIXER_TRANSITION_TAILSITTER_CAPTURE_CONFIRM_MS 300
+#define MIXER_TRANSITION_AIRSPEED_PROGRESS_BUCKET_COUNT \
+    (MIXER_TRANSITION_AIRSPEED_CONFIRM_MS / MIXER_TRANSITION_AIRSPEED_PROGRESS_BUCKET_MS + 1)
+
+typedef struct mixerTransitionConditionConfirmationState_s {
+    bool active;
+    timeMs_t conditionStartTime;
+} mixerTransitionConditionConfirmationState_t;
+
+typedef struct mixerTransitionAirspeedProgressFilter_s {
+    bool active;
+    bool windowMature;
+    uint8_t bucketCount;
+    uint8_t nextBucket;
+    timeMs_t windowStartTime;
+    timeMs_t acceptedProgressUpdateTime;
+    bool acceptedProgressUpdateValid;
+    float recentMinProgress;
+    float recentMaxProgress;
+    timeMs_t bucketStartTime[MIXER_TRANSITION_AIRSPEED_PROGRESS_BUCKET_COUNT];
+    timeMs_t bucketEndTime[MIXER_TRANSITION_AIRSPEED_PROGRESS_BUCKET_COUNT];
+    float bucketMinProgress[MIXER_TRANSITION_AIRSPEED_PROGRESS_BUCKET_COUNT];
+    float bucketMaxProgress[MIXER_TRANSITION_AIRSPEED_PROGRESS_BUCKET_COUNT];
+} mixerTransitionAirspeedProgressFilter_t;
+
+typedef enum {
+    MIXERAT_DIRECTION_NONE = 0,
+    MIXERAT_DIRECTION_TO_FW,
+    MIXERAT_DIRECTION_TO_MC,
+} mixerProfileATDirection_e;
+
+typedef enum {
+    MIXERAT_OSD_EVENT_NONE = 0,
+    MIXERAT_OSD_EVENT_DONE,
+    MIXERAT_OSD_EVENT_ABORTED,
+    MIXERAT_OSD_EVENT_ABORTED_IN_FW,
+    MIXERAT_OSD_EVENT_ABORTED_IN_MC,
+    MIXERAT_OSD_EVENT_AIRSPEED_TIMEOUT,
+} mixerProfileATOsdEvent_e;
+
+typedef enum {
+    MIXERAT_WAIT_REASON_NONE = 0,
+    MIXERAT_WAIT_REASON_MC_SPEED,
+    MIXERAT_WAIT_REASON_NO_SPEED,
+    MIXERAT_WAIT_REASON_MC_SPEED_HIGH,
+} mixerProfileATWaitReason_e;
+#endif
+
+//mixerProfile Automated Transition PHASE
+typedef enum {
+    MIXERAT_PHASE_IDLE,
+    MIXERAT_PHASE_TRANSITION_INITIALIZE,
+    MIXERAT_PHASE_TRANSITIONING,
+#ifdef USE_AUTO_TRANSITION
+    MIXERAT_PHASE_POST_SWITCH_FADE,
+    MIXERAT_PHASE_TAILSITTER_TO_MC_CAPTURE,
+#endif
+#ifndef USE_AUTO_TRANSITION
+    MIXERAT_PHASE_DONE,
+#endif
+} mixerProfileATState_e;
+
+typedef struct mixerProfileAT_s {
+    mixerProfileATState_e phase;
+#ifdef USE_AUTO_TRANSITION
+    mixerProfileATDirection_e direction;
+    mixerProfileATRequest_e request;
+    bool aborted;
+    bool directSwitchAbort;
+    bool abortedByAirspeedTimeout;
+    bool hotSwitchDone;
+    bool usedAirspeed;
+    bool tailSitterManualTransition;
+    mixerProfileATWaitReason_e waitReason;
+    bool transitionStartAirspeedCaptured;
+    float progress;
+    float handoffScalingProgress;
+    mixerTransitionAirspeedProgressFilter_t airspeedProgressFilter;
+    float motorRampProgress;
+    float transitionStartAirspeedCmS;
+    float blendToFw;
+    float pusherScale;
+    float liftScale;
+    float mcAuthorityScale;
+    float fwAuthorityScale;
+    float postSwitchFadeProgress;
+    float postSwitchFadeInitialScale;
+    uint16_t postSwitchFadeMotorMask;
+    uint16_t postSwitchFadeToCurrentMotorMask;
+    uint16_t postSwitchFadeFastToCurrentMotorMask;
+    uint16_t postSwitchFadeDurationMs;
+    uint16_t postSwitchFadeMotorOutput[MAX_SUPPORTED_MOTORS];
+    timeMs_t postSwitchFadeStartTime;
+    uint32_t servoHandoffMask;
+    uint16_t servoHandoffDurationMs;
+    uint16_t servoHandoffHoldDurationMs;
+    int16_t servoHandoffOutput[MAX_SUPPORTED_SERVOS];
+    timeMs_t servoHandoffStartTime;
+    timeMs_t servoHandoffHoldStartTime;
+    timeMs_t tailSitterCaptureStableSince;
+    timeMs_t transitionStartTime;
+#else
+    bool transitionInputMixing;
+    timeMs_t transitionStartTime;
+    timeMs_t transitionStabEndTime;
+    timeMs_t transitionTransEndTime;
+#endif
+} mixerProfileAT_t;
+
+#ifdef USE_AUTO_TRANSITION
+typedef struct mixerProfileATOsdStatus_s {
+    bool active;
+    mixerProfileATState_e phase;
+    mixerProfileATDirection_e direction;
+    mixerProfileATRequest_e request;
+    mixerProfileATOsdEvent_e event;
+    mixerProfileATWaitReason_e waitReason;
+    mixerProfileATDirection_e switchReminderDirection;
+} mixerProfileATOsdStatus_t;
+#endif
+
+extern mixerProfileAT_t mixerProfileAT;
+bool checkMixerATRequired(mixerProfileATRequest_e required_action);
+bool mixerATUpdateState(mixerProfileATRequest_e required_action);
+bool mixerATIsActive(void);
+bool mixerATWasAborted(void);
+bool mixerATWasAbortedByAirspeedTimeout(void);
+float mixerATGetPusherScale(void);
+float mixerATGetLiftScale(void);
+float mixerATGetMcAuthorityScale(void);
+float mixerATGetFwAuthorityScale(void);
+float mixerATGetBlendToFw(void);
+int16_t mixerATGetTransitionServoInput(void);
+#ifdef USE_AUTO_TRANSITION
+bool mixerATGetOsdStatus(mixerProfileATOsdStatus_t *status);
+bool mixerATManualFwToMcProtectionIsLatched(void);
+bool mixerATFwToMcProtectionAirspeedConfirmed(void);
+bool mixerATGetPostSwitchFadeMotorOutput(uint8_t motorIndex, int16_t idleOutput, int16_t currentOutput, int16_t *output);
+float mixerATGetPostSwitchFadeProgress(void);
+bool mixerATGetServoHandoffOutput(uint8_t servoIndex, int16_t currentOutput, int16_t *output);
+bool outputProfileDirectSwitchImmediate(int profile_index);
+#endif
+bool isMixerProfile2ModeReportedActive(void);
+bool isMixerTransitionModeReportedActive(void);
+
+extern mixerConfig_t currentMixerConfig;
+extern int currentMixerProfileIndex;
+extern int nextMixerProfileIndex;
+extern bool isMixerTransitionMixing;
+#define mixerConfig() (&(mixerProfiles(systemConfig()->current_mixer_profile_index)->mixer_config))
+#define mixerConfigMutable() ((mixerConfig_t *) mixerConfig())
+
+#define primaryMotorMixer(_index) (&(mixerProfiles(systemConfig()->current_mixer_profile_index)->MotorMixers)[_index])
+#define primaryMotorMixerMutable(_index) ((motorMixer_t *)primaryMotorMixer(_index))
+#define customServoMixers(_index) (&(mixerProfiles(systemConfig()->current_mixer_profile_index)->ServoMixers)[_index])
+#define customServoMixersMutable(_index) ((servoMixer_t *)customServoMixers(_index))
+
+static inline const mixerProfile_t* mixerProfiles_CopyArray_by_index(int _index) { return &mixerProfiles_CopyArray[_index]; }
+#define primaryMotorMixer_CopyArray() (mixerProfiles_CopyArray_by_index(systemConfig()->current_mixer_profile_index)->MotorMixers)
+#define customServoMixers_CopyArray() (mixerProfiles_CopyArray_by_index(systemConfig()->current_mixer_profile_index)->ServoMixers)
+
+#define mixerConfigByIndex(index) (&(mixerProfiles(index)->mixer_config))
+#define mixerMotorMixersByIndex(index) (mixerProfiles(index)->MotorMixers)
+#define mixerServoMixersByIndex(index) (mixerProfiles(index)->ServoMixers)
+
+bool platformTypeConfigured(flyingPlatformType_e platformType);
+bool outputProfileHotSwitch(int profile_index);
+bool checkMixerProfileHotSwitchAvalibility(void);
+void activateMixerConfig(void);
+void mixerConfigInit(void);
+void outputProfileUpdateTask(timeUs_t currentTimeUs);

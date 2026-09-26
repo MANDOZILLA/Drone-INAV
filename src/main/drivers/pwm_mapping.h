@@ -1,0 +1,107 @@
+/*
+ * This file is part of Cleanflight.
+ *
+ * Cleanflight is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * Cleanflight is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with Cleanflight.  If not, see <http://www.gnu.org/licenses/>.
+ */
+
+#pragma once
+
+#include "drivers/io_types.h"
+#include "drivers/timer.h"
+#include "drivers/pwm_output.h"
+#include "flight/mixer.h"
+#include "flight/mixer_profile.h"
+#include "flight/servos.h"
+#include "common/maths.h"
+
+#if defined(TARGET_MOTOR_COUNT)
+#define MAX_MOTORS  TARGET_MOTOR_COUNT
+#else
+#define MAX_MOTORS  12
+#endif
+
+#define MAX_SERVOS  18
+
+#define PWM_TIMER_HZ    1000000
+
+#define PULSE_1MS   (1000)      // 1ms pulse width
+
+#define MAX_INPUTS  8
+
+typedef enum {
+    PWM_TYPE_STANDARD = 0,
+    PWM_TYPE_ONESHOT125,
+    PWM_TYPE_MULTISHOT,
+    PWM_TYPE_BRUSHED,
+    PWM_TYPE_DSHOT150,
+    PWM_TYPE_DSHOT300,
+    PWM_TYPE_DSHOT600,
+    /* Appended, not inserted: the value is stored in configuration. Unlike
+     * everything above it this is a UART protocol rather than a timer waveform,
+     * so the ESC signal goes to a serial pin and not to a motor pad. */
+    PWM_TYPE_SRXL2,
+} motorPwmProtocolTypes_e;
+
+typedef enum {
+    SERVO_TYPE_PWM = 0,
+    SERVO_TYPE_SBUS,
+    SERVO_TYPE_SBUS_PWM
+} servoProtocolType_e;
+
+typedef enum {
+    PIN_LABEL_NONE = 0,
+    PIN_LABEL_LED,
+    PIN_LABEL_PINIO_BASE = 2    // values 2..5 = USER1..USER4 (add channel index 0-3)
+} pinLabel_e;
+
+typedef enum {
+    PWM_INIT_ERROR_NONE = 0,
+    PWM_INIT_ERROR_TOO_MANY_MOTORS,
+    PWM_INIT_ERROR_TOO_MANY_SERVOS,
+    PWM_INIT_ERROR_NOT_ENOUGH_MOTOR_OUTPUTS,
+    PWM_INIT_ERROR_NOT_ENOUGH_SERVO_OUTPUTS,
+    PWM_INIT_ERROR_TIMER_INIT_FAILED,
+} pwmInitError_e;
+
+typedef struct rangefinderIOConfig_s {
+    ioTag_t triggerTag;
+    ioTag_t echoTag;
+} rangefinderIOConfig_t;
+
+typedef struct {
+    bool usesHwTimer;
+    bool isDSHOT;
+} motorProtocolProperties_t;
+
+#ifndef SITL_BUILD
+typedef struct {
+    int maxTimMotorCount;
+    int maxTimServoCount;
+    const timerHardware_t * timMotors[MAX_PWM_OUTPUTS];
+    const timerHardware_t * timServos[MAX_PWM_OUTPUTS];
+} timMotorServoHardware_t;
+
+// MSP2_INAV_OUTPUT_ASSIGNMENT type byte: bit index of the TIM_USE_* flag.
+// Matches the JavaScript TIM_USE_* constants in outputMapping.js (which are bit indices).
+// Use __builtin_ctz(TIM_USE_x) to derive these from the bit-mask definitions in timer.h.
+#endif // SITL_BUILD
+
+bool pwmMotorAndServoInit(void);
+const motorProtocolProperties_t * getMotorProtocolProperties(motorPwmProtocolTypes_e proto);
+pwmInitError_e getPwmInitError(void);
+const char * getPwmInitErrorMessage(void);
+#ifndef SITL_BUILD
+const timMotorServoHardware_t *pwmGetOutputAssignment(void);
+void pwmCalculateAssignment(timMotorServoHardware_t *out, const uint8_t *proposedModes);
+#endif // SITL_BUILD

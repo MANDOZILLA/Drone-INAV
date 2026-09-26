@@ -1,0 +1,243 @@
+/*
+ * This file is part of Cleanflight.
+ *
+ * Cleanflight is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * Cleanflight is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with Cleanflight.  If not, see <http://www.gnu.org/licenses/>.
+ */
+
+#include <stdbool.h>
+#include <stdint.h>
+
+#include "platform.h"
+
+#ifdef USE_CMS
+
+#include "common/utils.h"
+
+#include "config/feature.h"
+
+#include "cms/cms.h"
+#include "cms/cms_types.h"
+#include "cms/cms_menu_misc.h"
+
+#include "fc/config.h"
+#include "fc/rc_controls.h"
+#include "fc/runtime_config.h"
+#include "fc/settings.h"
+
+#include "sensors/battery.h"
+
+// Battery menu
+
+static uint8_t battDispProfileIndex;
+static uint8_t battProfileIndex;
+static bool featureProfAutoswitchEnabled;
+static char battProfileIndexString[] = " p";
+
+
+static long cmsx_menuBattery_onEnter(const OSD_Entry *from)
+{
+    UNUSED(from);
+
+    battProfileIndex = getConfigBatteryProfile();
+    battDispProfileIndex = battProfileIndex + 1;
+    battProfileIndexString[1] = '0' + battDispProfileIndex;
+    featureProfAutoswitchEnabled = feature(FEATURE_BAT_PROFILE_AUTOSWITCH);
+
+    return 0;
+}
+
+static long cmsx_menuBattery_onExit(const OSD_Entry *self)
+{
+    UNUSED(self);
+
+    setConfigBatteryProfile(battProfileIndex);
+
+    if (ARMING_FLAG(ARMED)) {
+        // Do not call activateBatteryProfile() while armed: it runs batteryInit(),
+        // which clears the battery state, cell count and all voltage thresholds.
+        // The battery is then re-detected in flight under load, so the pack never
+        // looks "full when plugged in" and capacity based warnings and failsafes
+        // stay disabled for the rest of the flight. Just recompute the thresholds
+        // for the newly selected profile instead.
+        batteryUpdateThresholdsAndCells();
+    } else {
+        activateBatteryProfile();
+    }
+
+    if (featureProfAutoswitchEnabled) {
+        featureSet(FEATURE_BAT_PROFILE_AUTOSWITCH);
+    } else {
+        featureClear(FEATURE_BAT_PROFILE_AUTOSWITCH);
+    }
+
+    return 0;
+}
+
+static long cmsx_onBatteryProfileIndexChange(displayPort_t *displayPort, const void *ptr)
+{
+    UNUSED(displayPort);
+    UNUSED(ptr);
+
+    battProfileIndex = battDispProfileIndex - 1;
+    battProfileIndexString[1] = '0' + battDispProfileIndex;
+    batteryDisableProfileAutoswitch();
+
+    return 0;
+}
+
+static long cmsx_menuBattSettings_onEnter(const OSD_Entry *from)
+{
+    UNUSED(from);
+
+    setConfigBatteryProfile(battProfileIndex);
+
+    return 0;
+}
+
+static long cmsx_menuBattSettings_onExit(const OSD_Entry *self)
+{
+    UNUSED(self);
+
+    if (ARMING_FLAG(ARMED)) {
+        batteryUpdateThresholdsAndCells();
+    }
+
+    return 0;
+}
+
+static const OSD_Entry menuBattSettingsEntries[]=
+{
+    OSD_LABEL_DATA_ENTRY("-- BATT SETTINGS --", battProfileIndexString),
+
+#ifdef USE_ADC
+    OSD_SETTING_ENTRY("CELLS", SETTING_BAT_CELLS),
+    OSD_SETTING_ENTRY("CELL DET.", SETTING_VBAT_CELL_DETECT_VOLTAGE),
+    OSD_SETTING_ENTRY("CELL MAX", SETTING_VBAT_MAX_CELL_VOLTAGE),
+    OSD_SETTING_ENTRY("CELL WARN", SETTING_VBAT_WARNING_CELL_VOLTAGE),
+    OSD_SETTING_ENTRY("CELL MIN", SETTING_VBAT_MIN_CELL_VOLTAGE),
+#endif /* USE_ADC */
+    OSD_SETTING_ENTRY("CAP UNIT", SETTING_BATTERY_CAPACITY_UNIT),
+    OSD_SETTING_ENTRY("CAPACITY", SETTING_BATTERY_CAPACITY),
+    OSD_SETTING_ENTRY("CAP WARN", SETTING_BATTERY_CAPACITY_WARNING),
+    OSD_SETTING_ENTRY("CAP CRIT", SETTING_BATTERY_CAPACITY_CRITICAL),
+
+    OSD_BACK_AND_END_ENTRY,
+};
+
+static CMS_Menu cmsx_menuBattSettings = {
+#ifdef CMS_MENU_DEBUG
+    .GUARD_text = "XBATT",
+    .GUARD_type = OME_MENU,
+#endif
+    .onEnter = cmsx_menuBattSettings_onEnter,
+    .onExit = cmsx_menuBattSettings_onExit,
+    .onGlobalExit = NULL,
+    .entries = menuBattSettingsEntries
+};
+
+static long cmsx_menuBattSettingsInFlight_onEnter(const OSD_Entry *from)
+{
+    UNUSED(from);
+
+    setConfigBatteryProfile(battProfileIndex);
+
+    // Sync thresholds here too, not just on exit: setConfigBatteryProfile()
+    // above already switches the live profile the instant this submenu is
+    // entered, but a forced close (switch off, failsafe, panic sticks,
+    // timeout) tears the in-flight menu down without running onExit, which
+    // would otherwise leave the newly active profile's cell count and
+    // voltage thresholds stale from the previous one for the rest of the
+    // flight.
+    if (ARMING_FLAG(ARMED)) {
+        batteryUpdateThresholdsAndCells();
+    }
+
+    return 0;
+}
+
+static CMS_Menu cmsx_menuBattSettingsInFlight = {
+#ifdef CMS_MENU_DEBUG
+    .GUARD_text = "XBATT_IF",
+    .GUARD_type = OME_MENU,
+#endif
+    .onEnter = cmsx_menuBattSettingsInFlight_onEnter,
+    .onExit = cmsx_menuBattSettings_onExit,
+    .onGlobalExit = NULL,
+    .entries = menuBattSettingsEntries
+};
+
+static const OSD_Entry menuBatteryEntries[]=
+{
+    OSD_LABEL_ENTRY("-- BATTERY --"),
+
+#ifdef USE_ADC
+    OSD_BOOL_ENTRY("PROF AUTOSWITCH", &featureProfAutoswitchEnabled),
+#endif
+    OSD_UINT8_CALLBACK_ENTRY("PROF", cmsx_onBatteryProfileIndexChange, (&(const OSD_UINT8_t){ &battDispProfileIndex, 1, MAX_BATTERY_PROFILE_COUNT, 1})),
+    OSD_SUBMENU_ENTRY("SETTINGS", &cmsx_menuBattSettings),
+
+    OSD_BACK_AND_END_ENTRY,
+};
+
+CMS_Menu cmsx_menuBattery = {
+#ifdef CMS_MENU_DEBUG
+    .GUARD_text = "XBATT",
+    .GUARD_type = OME_MENU,
+#endif
+    .onEnter = cmsx_menuBattery_onEnter,
+    .onExit = cmsx_menuBattery_onExit,
+    .onGlobalExit = NULL,
+    .entries = menuBatteryEntries
+};
+
+static long cmsx_onBatteryProfileIndexChangeInFlight(displayPort_t *displayPort, const void *ptr)
+{
+    // Same as the ground callback, but also pushes the change into the live
+    // profile immediately - a forced close of the in-flight menu (switch off,
+    // failsafe, panic sticks, timeout) never runs onExit, so waiting for exit
+    // to apply this would silently drop the profile switch.
+    cmsx_onBatteryProfileIndexChange(displayPort, ptr);
+
+    setConfigBatteryProfile(battProfileIndex);
+    if (ARMING_FLAG(ARMED)) {
+        batteryUpdateThresholdsAndCells();
+    } else {
+        activateBatteryProfile();
+    }
+
+    return 0;
+}
+
+static const OSD_Entry menuBatteryInFlightEntries[]=
+{
+    OSD_LABEL_ENTRY("-- BATTERY --"),
+
+    OSD_UINT8_CALLBACK_ENTRY("PROF", cmsx_onBatteryProfileIndexChangeInFlight, (&(const OSD_UINT8_t){ &battDispProfileIndex, 1, MAX_BATTERY_PROFILE_COUNT, 1})),
+    OSD_SUBMENU_ENTRY("SETTINGS", &cmsx_menuBattSettingsInFlight),
+
+    OSD_BACK_AND_END_ENTRY,
+};
+
+const CMS_Menu cmsx_menuBatteryInFlight = {
+#ifdef CMS_MENU_DEBUG
+    .GUARD_text = "XBATT_IF",
+    .GUARD_type = OME_MENU,
+#endif
+    .onEnter = cmsx_menuBattery_onEnter,
+    .onExit = cmsx_menuBattery_onExit,
+    .onGlobalExit = NULL,
+    .entries = menuBatteryInFlightEntries
+};
+
+#endif // CMS

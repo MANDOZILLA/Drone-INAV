@@ -1,0 +1,34 @@
+/*
+ * This file is part of Cleanflight.
+ *
+ * Cleanflight is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * Cleanflight is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with Cleanflight.  If not, see <http://www.gnu.org/licenses/>.
+ */
+
+#pragma once
+
+#include "target/common.h"
+
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wunused-function"
+#pragma GCC diagnostic ignored "-Waddress-of-packed-member"
+#define MAVLINK_COMM_NUM_BUFFERS MAX_MAVLINK_PORTS
+/* Helpers compile once with external linkage in mavlink/mavlink_helpers.c. */
+#ifndef MAVLINK_SEPARATE_HELPERS
+#define MAVLINK_SEPARATE_HELPERS
+#endif
+#include "storm32/mavlink.h"
+#pragma GCC diagnostic pop
+
+void mavlinkRxHandleMessage(const mavlink_rc_channels_override_t *msg);
+bool mavlinkRxInit(const struct rxConfig_s *initialRxConfig, struct rxRuntimeConfig_s *rxRuntimeConfig);
